@@ -82,17 +82,17 @@ class SingleStageMono3DDetector(SingleStageDetector):
                 corresponds to each class.
         """
         x = self.extract_feat(img)
-        outs = self.bbox_head(x)
+        outs = self.bbox_head(x, img_metas)
         bbox_outputs = self.bbox_head.get_bboxes(
             *outs, img_metas, rescale=rescale)
 
-        if self.bbox_head.pred_bbox2d:
-            from mmdet.core import bbox2result
-            bbox2d_img = [
-                bbox2result(bboxes2d, labels, self.bbox_head.num_classes)
-                for bboxes, scores, labels, attrs, bboxes2d in bbox_outputs
-            ]
-            bbox_outputs = [bbox_outputs[0][:-1]]
+        # if self.bbox_head.pred_bbox2d:
+        #     from mmdet.core import bbox2result
+        #     bbox2d_img = [
+        #         bbox2result(bboxes2d, labels, self.bbox_head.num_classes)
+        #         for bboxes, scores, labels, attrs, bboxes2d in bbox_outputs
+        #     ]
+        #     bbox_outputs = [bbox_outputs[0][:-1]]
 
         bbox_img = [
             bbox3d2result(bboxes, scores, labels, attrs)
@@ -102,9 +102,9 @@ class SingleStageMono3DDetector(SingleStageDetector):
         bbox_list = [dict() for i in range(len(img_metas))]
         for result_dict, img_bbox in zip(bbox_list, bbox_img):
             result_dict['img_bbox'] = img_bbox
-        if self.bbox_head.pred_bbox2d:
-            for result_dict, img_bbox2d in zip(bbox_list, bbox2d_img):
-                result_dict['img_bbox2d'] = img_bbox2d
+        # if self.bbox_head.pred_bbox2d:
+        #     for result_dict, img_bbox2d in zip(bbox_list, bbox2d_img):
+        #         result_dict['img_bbox2d'] = img_bbox2d
         return bbox_list
 
     def aug_test(self, imgs, img_metas, rescale=False):

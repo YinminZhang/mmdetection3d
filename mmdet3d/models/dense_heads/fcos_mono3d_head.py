@@ -71,10 +71,10 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                  loss_centerness=dict(
                      type='CrossEntropyLoss',
                      use_sigmoid=True,
-                     loss_weight=1.0,
-                     geometric_module=False),
+                     loss_weight=1.0,),
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
                  centerness_branch=(64, ),
+                 geometric_module=False,
                  **kwargs):
         self.regress_ranges = regress_ranges
         self.center_sampling = center_sampling
@@ -84,6 +84,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         self.centerness_alpha = centerness_alpha
         self.centerness_branch = centerness_branch
         self.geometric_module = geometric_module
+        
         super().__init__(
             num_classes,
             in_channels,
@@ -94,6 +95,26 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             norm_cfg=norm_cfg,
             **kwargs)
         self.loss_centerness = build_loss(loss_centerness)
+        self.conv1 = nn.Sequential(
+                nn.Conv2d(3, 32, kernel_size=3, padding=1, bias=True),
+                nn.ReLU(inplace=True),
+                nn.BatchNorm2d(32),
+                nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=True),
+                nn.ReLU(inplace=True),
+                nn.BatchNorm2d(64),
+                nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=True),
+            )
+        self.conv2 = nn.Sequential(
+                    nn.Conv2d(256+128, 256, kernel_size=3, padding=1, bias=True),
+                    nn.ReLU(inplace=True),
+                    nn.BatchNorm2d(256),
+                    nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=True),
+                    nn.ReLU(inplace=True),
+                    nn.BatchNorm2d(256),
+                    nn.Conv2d(256, 1, kernel_size=3, padding=1, bias=True),
+                )
+        self.init_weights(self.conv1)
+        self.init_weights(self.conv2)
 
     def _init_layers(self):
         """Initialize layers of the head."""
@@ -187,21 +208,35 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             if not self.training:
                 # Note that this line is conducted only when testing
                 bbox_pred[:, :2] *= stride
+
+        
         if self.geometric_module:
             # TODO camera parameters and orientations.
-            
             # bbox_pred: [offset, depth, 3d box size, velo, 2d box size]
-            h = bbox_pred[:, -1:]
-            ry = 0
-            H = bbox_pred[:, 3:4]
-            W = bbox_pred[:, 4:5]
-            L = bbox_pred[:, 5:6]
-            beta = 0
-            fv = 0
-            depth = depth_computation(h, ry, L, W, H, beta, fv)
-            xyz = torch.cat([depth], dim=1)
-            depth = self.conv(torch.cat([x, xyz], dim=1))
-            bbox_pred[:, 2]  = scale_depth(depth).float().exp()
+            h = bbox_pred[:, -1] - bbox_pred[:, -3]
+            ry = bbox_pred[:, 6]
+            H = bbox_pred[:, 3]
+            W = bbox_pred[:, 4]
+            L = bbox_pred[:, 5]
+            
+            fu = torch.tensor(info['cam_intrinsic'][0][0], device=W.device)
+            cu = torch.tensor(info['cam_intrinsic'][0][2], device=W.device)
+            fv = torch.tensor(info['cam_intrinsic'][1][1], device=W.device)
+            cv = torch.tensor(info['cam_intrinsic'][1][2], device=W.device)
+            
+            u = torch.tensor((bbox_pred[:, -4] + bbox_pred[:, -2])/2, device=W.device)
+            v = torch.tensor(bbox_pred[:, -1], device=W.device)
+            
+            theta = torch.atan2(u - cu, fu)
+            beta = torch.atan2(v - cv, fv)
+
+            z_ = depth_computation(h, ry, L, W, H, beta, fv)
+            x_ = torch.tan(theta) * z_
+            y_ = torch.tan(beta) * z_
+            xyz = torch.stack([x_, y_, z_], dim=1)
+            
+            depth = self.conv2(torch.cat([x, self.conv1(xyz)], dim=1))
+            bbox_pred[:, 2:3]  = scale_depth(depth).float().exp()
         
         return cls_score, bbox_pred, dir_cls_pred, attr_pred, centerness
 
@@ -960,16 +995,26 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
 
         return labels, bbox_targets, labels_3d, bbox_targets_3d, \
             centerness_targets, attr_labels
+            
+    def fill_fc_weights(self, layers):
+        for m in layers.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight, std=0.001)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            
+            
 def depth_computation(h, ry, L, W, H, beta, fv):
     ry_ = ry + np.pi
-    if ry_ > np.pi:
-        ry_ -= np.pi * 2
-    z_ = np.array([1 / 2 * np.sqrt(L ** 2 + W ** 2) * np.sin(ry + np.arctan2(W, L)),
-                   1 / 2 * np.sqrt(L ** 2 + W ** 2) * np.sin(ry - np.arctan2(W, L)),
-                   1 / 2 * np.sqrt(L ** 2 + W ** 2) * np.sin(ry_ + np.arctan2(W, L)),
-                   1 / 2 * np.sqrt(L ** 2 + W ** 2) * np.sin(ry_ - np.arctan2(W, L))])
-    z_local_ = np.max(z_)
-    z2 = fv / (2 * h) * (2 * np.tan(beta) * z_local_ + H) + 1 / 2 * np.sqrt(
-        (fv / h * (2 * np.tan(beta) * z_local_ + H)) ** 2 + 4 * (z_local_ ** 2 - H * z_local_ * fv / h)) # +0.6481759373918496
+    ry_[ry_ > np.pi] -= np.pi * 2
+    z_ = torch.cat([1 / 2 * torch.sqrt(L ** 2 + W ** 2) * torch.sin(ry + torch.atan2(W, L)),
+                   1 / 2 * torch.sqrt(L ** 2 + W ** 2) * torch.sin(ry - torch.atan2(W, L)),
+                   1 / 2 * torch.sqrt(L ** 2 + W ** 2) * torch.sin(ry_ + torch.atan2(W, L)),
+                   1 / 2 * torch.sqrt(L ** 2 + W ** 2) * torch.sin(ry_ - torch.atan2(W, L))], dim=0)
+    z_local_, _ = torch.max(z_, dim=0)
+    z2 = fv / (2 * h) * (2 * torch.tan(beta) * z_local_ + H) + 1 / 2 * torch.sqrt(
+        (fv / h * (2 * torch.tan(beta) * z_local_ + H)) ** 2 + 4 * (z_local_ ** 2 - H * z_local_ * fv / h)) # +0.6481759373918496
 
     return z2
+
+    
