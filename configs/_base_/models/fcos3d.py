@@ -31,14 +31,15 @@ model = dict(
         pred_velo=True,
         dir_offset=0.7854,  # pi/4
         strides=[8, 16, 32, 64, 128],
-        group_reg_dims=(2, 1, 3, 1, 2),  # offset, depth, size, rot, velo
+        group_reg_dims=(2, 1, 3, 1, 2, 2),  # offset, depth, size, rot, velo, size 2d
         cls_branch=(256, ),
         reg_branch=(
             (256, ),  # offset
             (256, ),  # depth
             (256, ),  # size
             (256, ),  # rot
-            ()  # velo
+            (),  # velo
+            (256, ), # size 2d
         ),
         dir_branch=(256, ),
         attr_branch=(256, ),
@@ -55,14 +56,16 @@ model = dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
         loss_centerness=dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
+        bbox_code_size=11,
         norm_on_bbox=True,
         centerness_on_reg=True,
         center_sampling=True,
+        pred_bbox2d=True,
         conv_bias=True,
         dcn_on_last_conv=True),
     train_cfg=dict(
         allowed_border=0,
-        code_weight=[1.0, 1.0, 0.2, 1.0, 1.0, 1.0, 1.0, 0.05, 0.05],
+        code_weight=[1.0, 1.0, 0.2, 1.0, 1.0, 1.0, 1.0, 0.05, 0.05, 1.0],
         pos_weight=-1,
         debug=False),
     test_cfg=dict(

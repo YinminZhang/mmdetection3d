@@ -71,7 +71,8 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                  loss_centerness=dict(
                      type='CrossEntropyLoss',
                      use_sigmoid=True,
-                     loss_weight=1.0),
+                     loss_weight=1.0,
+                     geometric_module=False),
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
                  centerness_branch=(64, ),
                  **kwargs):
@@ -82,6 +83,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         self.centerness_on_reg = centerness_on_reg
         self.centerness_alpha = centerness_alpha
         self.centerness_branch = centerness_branch
+        self.geometric_module = geometric_module
         super().__init__(
             num_classes,
             in_channels,
@@ -112,7 +114,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                 normal_init(m.conv, std=0.01)
         normal_init(self.conv_centerness, std=0.01)
 
-    def forward(self, feats):
+    def forward(self, feats, info=None):
         """Forward features from the upstream network.
 
         Args:
@@ -137,9 +139,9 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                     each is a 4D-tensor, the channel number is num_points * 1.
         """
         return multi_apply(self.forward_single, feats, self.scales,
-                           self.strides)
+                           self.strides, info)
 
-    def forward_single(self, x, scale, stride):
+    def forward_single(self, x, scale, stride, info=None):
         """Forward features of a single scale levle.
 
         Args:
@@ -185,7 +187,22 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             if not self.training:
                 # Note that this line is conducted only when testing
                 bbox_pred[:, :2] *= stride
-
+        if self.geometric_module:
+            # TODO camera parameters and orientations.
+            
+            # bbox_pred: [offset, depth, 3d box size, velo, 2d box size]
+            h = bbox_pred[:, -1:]
+            ry = 0
+            H = bbox_pred[:, 3:4]
+            W = bbox_pred[:, 4:5]
+            L = bbox_pred[:, 5:6]
+            beta = 0
+            fv = 0
+            depth = depth_computation(h, ry, L, W, H, beta, fv)
+            xyz = torch.cat([depth], dim=1)
+            depth = self.conv(torch.cat([x, xyz], dim=1))
+            bbox_pred[:, 2]  = scale_depth(depth).float().exp()
+        
         return cls_score, bbox_pred, dir_cls_pred, attr_pred, centerness
 
     @staticmethod
@@ -943,3 +960,16 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
 
         return labels, bbox_targets, labels_3d, bbox_targets_3d, \
             centerness_targets, attr_labels
+def depth_computation(h, ry, L, W, H, beta, fv):
+    ry_ = ry + np.pi
+    if ry_ > np.pi:
+        ry_ -= np.pi * 2
+    z_ = np.array([1 / 2 * np.sqrt(L ** 2 + W ** 2) * np.sin(ry + np.arctan2(W, L)),
+                   1 / 2 * np.sqrt(L ** 2 + W ** 2) * np.sin(ry - np.arctan2(W, L)),
+                   1 / 2 * np.sqrt(L ** 2 + W ** 2) * np.sin(ry_ + np.arctan2(W, L)),
+                   1 / 2 * np.sqrt(L ** 2 + W ** 2) * np.sin(ry_ - np.arctan2(W, L))])
+    z_local_ = np.max(z_)
+    z2 = fv / (2 * h) * (2 * np.tan(beta) * z_local_ + H) + 1 / 2 * np.sqrt(
+        (fv / h * (2 * np.tan(beta) * z_local_ + H)) ** 2 + 4 * (z_local_ ** 2 - H * z_local_ * fv / h)) # +0.6481759373918496
+
+    return z2
