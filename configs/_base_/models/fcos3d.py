@@ -31,7 +31,7 @@ model = dict(
         pred_velo=True,
         dir_offset=0.7854,  # pi/4
         strides=[8, 16, 32, 64, 128],
-        group_reg_dims=(2, 1, 3, 1, 2, 2),  # offset, depth, size, rot, velo, size 2d
+        group_reg_dims=(2, 1, 3, 1, 2, 4),  # offset, depth, size, rot, velo, box 2d
         cls_branch=(256, ),
         reg_branch=(
             (256, ),  # offset
@@ -39,7 +39,7 @@ model = dict(
             (256, ),  # size
             (256, ),  # rot
             (),  # velo
-            (256, ), # size 2d
+            (256, ), # box 2d
         ),
         dir_branch=(256, ),
         attr_branch=(256, ),
