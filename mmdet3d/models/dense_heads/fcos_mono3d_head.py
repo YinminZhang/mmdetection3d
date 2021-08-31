@@ -113,8 +113,8 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
                     nn.BatchNorm2d(256),
                     nn.Conv2d(256, 1, kernel_size=3, padding=1, bias=True),
                 )
-        self.init_weights(self.conv1)
-        self.init_weights(self.conv2)
+        self.fill_fc_weights(self.conv1)
+        self.fill_fc_weights(self.conv2)
 
     def _init_layers(self):
         """Initialize layers of the head."""
