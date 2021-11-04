@@ -20,6 +20,8 @@ from mmdet3d.utils import collect_env, get_root_logger
 from mmdet.apis import set_random_seed
 from mmseg import __version__ as mmseg_version
 
+import faulthandler
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
@@ -75,6 +77,11 @@ def parse_args():
         '--autoscale-lr',
         action='store_true',
         help='automatically scale lr with the number of gpus')
+    parser.add_argument(
+        '--port',
+        '-p',
+        default=29500,
+        help='automatically scale lr with the number of gpus')
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
@@ -128,6 +135,7 @@ def main():
     if args.launcher == 'none':
         distributed = False
     else:
+        cfg.dist_params.port = args.port
         distributed = True
         init_dist(args.launcher, **cfg.dist_params)
         # re-set gpu_ids with distributed training mode
@@ -219,4 +227,5 @@ def main():
 
 
 if __name__ == '__main__':
+    faulthandler.enable()
     main()

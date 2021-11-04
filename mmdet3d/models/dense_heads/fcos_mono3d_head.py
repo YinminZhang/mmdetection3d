@@ -224,8 +224,10 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
             fv = torch.tensor(info['cam_intrinsic'][1][1], device=W.device)
             cv = torch.tensor(info['cam_intrinsic'][1][2], device=W.device)
             
-            u = torch.tensor((bbox_pred[:, -4] + bbox_pred[:, -2])/2, device=W.device)
-            v = torch.tensor(bbox_pred[:, -1], device=W.device)
+            # u = torch.tensor((bbox_pred[:, -4] + bbox_pred[:, -2])/2, device=W.device)
+            # v = torch.tensor(bbox_pred[:, -1], device=W.device)
+            u = ((bbox_pred[:, -4] + bbox_pred[:, -2])/2).clone().detach()
+            v = (bbox_pred[:, -1]).clone().detach()
             
             theta = torch.atan2(u - cu, fu)
             beta = torch.atan2(v - cv, fv)
@@ -349,6 +351,7 @@ class FCOSMono3DHead(AnchorFreeMono3DHead):
         Returns:
             dict[str, Tensor]: A dictionary of loss components.
         """
+        import ipdb; ipdb.set_trace()
         assert len(cls_scores) == len(bbox_preds) == len(centernesses) == len(
             attr_preds)
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
